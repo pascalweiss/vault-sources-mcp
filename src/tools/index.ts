@@ -1,2 +1,1 @@
-// MCP tool handlers — implemented in Phase 2+
-export {};
+export { registerDbTools } from "./db-tools.js";

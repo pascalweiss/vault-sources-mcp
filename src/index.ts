@@ -1,19 +1,28 @@
 #!/usr/bin/env node
 
-/**
- * vault-sources-mcp — MCP Server entry point.
- *
- * Implements the Model Context Protocol over stdio transport.
- * Tools are registered in subsequent phases.
- */
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { DatabaseManager } from "./db/database.js";
+import { registerDbTools } from "./tools/db-tools.js";
 
-import { FRONTMATTER_KEY } from "./types.js";
+const dbPath = process.argv[2] ?? process.env["VAULT_SOURCES_DB_PATH"] ?? "./data/vault-sources.sqlite";
 
-function main(): void {
-  const dbPath = process.argv[2] ?? process.env["VAULT_SOURCES_DB_PATH"] ?? "./data/vault-sources.sqlite";
+const server = new McpServer({
+  name: "vault-sources-mcp",
+  version: "0.1.0",
+});
 
-  // Placeholder: MCP server setup happens in Phase 2
-  console.error(`vault-sources-mcp starting (db: ${dbPath}, frontmatter key: ${FRONTMATTER_KEY})`);
+const dbManager = new DatabaseManager();
+
+registerDbTools(server, dbManager, dbPath);
+
+async function main(): Promise<void> {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error(`vault-sources-mcp running (db: ${dbPath})`);
 }
 
-main();
+main().catch((err) => {
+  console.error("Fatal error:", err);
+  process.exit(1);
+});
