@@ -275,12 +275,54 @@ vault-sources-mcp/
 │       ├── note-tools.ts           # register, get, mark deleted
 │       ├── link-tools.ts           # add, remove, query both directions
 │       └── reconciliation-tools.ts # Diagnostics & event log queries
+├── skills/                            # Claude Code skill templates
+│   ├── vault-init/SKILL.md            # Database initialization workflow
+│   ├── store-source/SKILL.md          # Store input sources
+│   ├── new-note/SKILL.md              # Create note with provenance
+│   ├── check-provenance/SKILL.md      # Trace note origins
+│   └── vault-health/SKILL.md          # Diagnostic health checks
 ├── test/
 │   ├── db/                         # Unit tests (40 tests)
 │   ├── integration.test.ts         # End-to-end workflow test (4 tests)
 │   └── dummy-vault/                # Sample Obsidian vault (gardening notes)
 └── dist/                           # Compiled output
 ```
+
+---
+
+## Skill Templates
+
+This project includes ready-to-use [Claude Code skill](https://code.claude.com/docs/en/skills) templates in the `skills/` directory. Copy them to your project's `.claude/skills/` to give your AI agent structured workflows for provenance tracking.
+
+### Installation
+
+```bash
+# Copy all skills into your project
+cp -r /path/to/vault-sources-mcp/skills/* .claude/skills/
+```
+
+Or copy individual skills as needed.
+
+### Available Skills
+
+| Skill | Invoke with | Description |
+|-------|-------------|-------------|
+| **vault-init** | `/vault-init` | Initializes the provenance database. Checks if the DB exists, asks for confirmation, runs `db_init`, and reports the result. Manual invocation only — prevents accidental re-initialization. |
+| **store-source** | `/store-source` | Stores raw input material (transcripts, articles, excerpts) in the provenance database. Handles deduplication via SHA-256 and reports the `input_id` back. Claude can also invoke this automatically when you provide source material. |
+| **new-note** | `/new-note [title]` | Full note creation workflow: generates a UUIDv7, writes the markdown file with frontmatter, registers the note in the database, and links it to its input sources. Ensures the complete provenance chain is established in a single step. |
+| **check-provenance** | `/check-provenance [note or input]` | Answers "where did this note come from?" by tracing a note back to its input sources. Also works in reverse — given an input, lists all notes derived from it. Claude can invoke this automatically when provenance questions arise. |
+| **vault-health** | `/vault-health` | Runs a comprehensive diagnostic: finds orphaned inputs (stored but never linked), unlinked notes (no known source), stale notes (not seen recently), and shows recent activity. Presents findings with suggested actions — never auto-fixes. Manual invocation only. |
+
+### Customization
+
+Each skill is a standalone `SKILL.md` file with YAML frontmatter. You can:
+
+- **Edit the `description`** to fine-tune when Claude auto-invokes the skill
+- **Set `disable-model-invocation: true`** to restrict a skill to manual `/command` use only
+- **Add supporting files** (templates, examples) in the skill's directory
+- **Adjust metadata fields** (e.g. `source_type`, `title`) to match your workflow
+
+See the [Claude Code skills documentation](https://code.claude.com/docs/en/skills) for the full configuration reference.
 
 ---
 
