@@ -331,7 +331,7 @@ See the [Claude Code skills documentation](https://code.claude.com/docs/en/skill
 ```bash
 npm install          # Install dependencies
 npm run build        # Compile TypeScript
-npm test             # Run all 44 tests
+npm test             # Run all tests
 npm run dev          # Watch mode (recompile on change)
 npm run clean        # Remove compiled output
 ```
