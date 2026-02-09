@@ -4,6 +4,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { DatabaseManager } from "./db/database.js";
 import { registerDbTools } from "./tools/db-tools.js";
+import { registerIdTools } from "./tools/id-tools.js";
+import { registerInputTools } from "./tools/input-tools.js";
 
 const dbPath = process.argv[2] ?? process.env["VAULT_SOURCES_DB_PATH"] ?? "./data/vault-sources.sqlite";
 
@@ -15,6 +17,8 @@ const server = new McpServer({
 const dbManager = new DatabaseManager();
 
 registerDbTools(server, dbManager, dbPath);
+registerIdTools(server);
+registerInputTools(server, dbManager);
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
