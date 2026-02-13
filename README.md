@@ -70,7 +70,22 @@ npm run build
 
 ### 1. Via `.mcp.json` (Claude Code Projects)
 
-Create a `.mcp.json` file in your project root. Claude Code automatically loads this file when starting in the directory:
+Create a `.mcp.json` file in your project root. Claude Code automatically loads this file when starting in the directory.
+
+**If your working directory is your Obsidian vault**, no environment variables are needed — the server auto-detects the vault from MCP roots and stores the database as `.vault-sources.sqlite` inside it:
+
+```json
+{
+  "mcpServers": {
+    "vault-sources": {
+      "command": "node",
+      "args": ["/path/to/vault-sources-mcp/dist/src/index.js"]
+    }
+  }
+}
+```
+
+**If your vault is elsewhere**, set an explicit path:
 
 ```json
 {
@@ -153,15 +168,24 @@ VAULT_SOURCES_DB_PATH = "/path/to/vault-sources.sqlite"
 
 ## Configuration
 
+### Database Path Resolution
+
+The database path is resolved in this order:
+
+1. **CLI argument** — `node dist/src/index.js /path/to/db.sqlite`
+2. **`VAULT_SOURCES_DB_PATH`** environment variable
+3. **`VAULT_PATH`** environment variable — DB stored as `$VAULT_PATH/.vault-sources.sqlite`
+4. **MCP client roots** — if the client supports [roots](https://modelcontextprotocol.io/docs/concepts/roots), the server uses the first `file://` root and stores the DB as `.vault-sources.sqlite` inside it
+5. **Fallback** — `./data/vault-sources.sqlite`
+
+This means MCP clients like Claude Code, which expose the working directory as a root, work with zero configuration when launched from inside an Obsidian vault.
+
+### Environment Variables
+
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `VAULT_SOURCES_DB_PATH` | Path to the SQLite database file | `./data/vault-sources.sqlite` |
-
-The database path can also be passed as the first CLI argument:
-
-```bash
-node dist/src/index.js /custom/path/to/vault-sources.sqlite
-```
+| `VAULT_SOURCES_DB_PATH` | Explicit path to the SQLite database file | — |
+| `VAULT_PATH` | Path to Obsidian vault (DB stored as `.vault-sources.sqlite` inside it) | — |
 
 ---
 

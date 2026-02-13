@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { DatabaseManager } from "../db/database.js";
 import { DatabaseAlreadyInitializedError } from "../errors.js";
 
-export function registerDbTools(server: McpServer, dbManager: DatabaseManager, dbPath: string): void {
+export function registerDbTools(server: McpServer, dbManager: DatabaseManager, getDbPath: () => string): void {
   server.registerTool(
     "db_status",
     {
@@ -18,7 +18,7 @@ export function registerDbTools(server: McpServer, dbManager: DatabaseManager, d
           content: [
             {
               type: "text",
-              text: JSON.stringify({ initialized: false, path: dbPath }, null, 2),
+              text: JSON.stringify({ initialized: false, path: getDbPath() }, null, 2),
             },
           ],
         };
@@ -37,7 +37,7 @@ export function registerDbTools(server: McpServer, dbManager: DatabaseManager, d
             text: JSON.stringify(
               {
                 initialized: true,
-                path: dbPath,
+                path: getDbPath(),
                 stats: {
                   inputs: inputCount,
                   notes: noteCount,
@@ -68,7 +68,7 @@ export function registerDbTools(server: McpServer, dbManager: DatabaseManager, d
         throw new DatabaseAlreadyInitializedError();
       }
 
-      const targetPath = overridePath ?? dbPath;
+      const targetPath = overridePath ?? getDbPath();
 
       try {
         if (!dbManager.isInitialized()) {
