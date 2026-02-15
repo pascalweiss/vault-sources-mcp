@@ -35,3 +35,10 @@ export class InvalidParameterError extends VaultSourcesError {
     this.name = "InvalidParameterError";
   }
 }
+
+export class FileReadError extends VaultSourcesError {
+  constructor(filePath: string, cause: string) {
+    super(`Failed to read file '${filePath}': ${cause}`, "FILE_READ_ERROR");
+    this.name = "FileReadError";
+  }
+}

@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { v7 as uuidv7 } from "uuid";
+import { readFile } from "node:fs/promises";
+import { resolve, basename } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { DatabaseManager } from "../db/database.js";
 import { InputRepository } from "../db/repositories/input-repository.js";
-import { DatabaseNotInitializedError, VaultSourcesError } from "../errors.js";
+import { DatabaseNotInitializedError, VaultSourcesError, FileReadError } from "../errors.js";
 
 export function registerInputTools(server: McpServer, dbManager: DatabaseManager): void {
   function getRepo(): InputRepository {
@@ -46,6 +48,85 @@ export function registerInputTools(server: McpServer, dbManager: DatabaseManager
           },
         ],
       };
+    },
+  );
+
+  server.registerTool(
+    "store_input_from_file",
+    {
+      description:
+        "Store an input by reading from a file. Content is hashed for deduplication. " +
+        "Automatically includes file path and filename in metadata. Returns the input ID and whether it was a duplicate.",
+      inputSchema: {
+        file_path: z.string().min(1).describe("Path to the file to read (relative or absolute)."),
+        meta: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe("Optional additional metadata (e.g. source, title). User metadata takes precedence over auto-generated."),
+      },
+    },
+    async ({ file_path, meta }) => {
+      try {
+        const absolutePath = resolve(file_path);
+        let fileContent: string;
+
+        try {
+          fileContent = await readFile(absolutePath, "utf-8");
+        } catch (err: unknown) {
+          const error = err as NodeJS.ErrnoException;
+          let cause = "Unknown error";
+
+          if (error.code === "ENOENT") {
+            cause = "File not found";
+          } else if (error.code === "EACCES") {
+            cause = "Permission denied";
+          } else if (error.code === "EISDIR") {
+            cause = "Path is a directory, not a file";
+          } else if (error.message) {
+            cause = error.message;
+          }
+
+          throw new FileReadError(file_path, cause);
+        }
+
+        if (fileContent.length === 0) {
+          throw new FileReadError(file_path, "File is empty");
+        }
+
+        // Auto-generate file metadata and merge with user metadata
+        const autoMeta = {
+          file_path: absolutePath,
+          filename: basename(absolutePath),
+        };
+        const mergedMeta = { ...autoMeta, ...(meta as Record<string, unknown> | undefined) };
+
+        const repo = getRepo();
+        const inputId = uuidv7();
+        const { input, duplicate } = repo.store(inputId, fileContent, mergedMeta);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  input_id: input.input_id,
+                  content_sha256: input.content_sha256,
+                  duplicate,
+                  file_path: absolutePath,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      } catch (err) {
+        if (err instanceof VaultSourcesError) {
+          return { isError: true, content: [{ type: "text" as const, text: err.message }] };
+        }
+        throw err;
+      }
     },
   );
 
