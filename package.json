@@ -1,9 +1,19 @@
 {
-  "name": "vault-sources-mcp",
-  "version": "0.1.0",
+  "name": "@pwlab/vault-sources-mcp",
+  "version": "0.1.1",
   "description": "MCP Server for tracking AI input → Obsidian vault provenance",
   "main": "dist/src/index.js",
   "type": "module",
+  "bin": {
+    "vault-sources-mcp": "dist/src/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "registry": "https://nexus.pwlab.dev/repository/npm-hosted/",
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",

@@ -1,0 +1,60 @@
+# Publishes this package to the private Nexus npm registry on version tags.
+#
+# Flow:
+#   - build   : on branches / MRs -> npm ci + build + pack (validation, artifact)
+#   - publish : on tags vX.Y.Z    -> npm ci + build + npm publish to Nexus
+#
+# The tag must match the package.json version (guard below), e.g. tag `v1.0.1`
+# for version "1.0.1". Auth comes from the masked CI/CD variable NEXUS_NPM_AUTH
+# (= base64 of "<publisher-user>:<password>", the npm-hosted-publisher Nexus user).
+
+stages:
+  - build
+  - publish
+
+variables:
+  NPM_REGISTRY: "https://nexus.pwlab.dev/repository/npm-hosted/"
+
+build:
+  stage: build
+  image: node:20
+  tags:
+    - kubernetes
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - when: on_success
+  script:
+    - npm ci
+    - npm run build
+    - npm pack
+  artifacts:
+    paths:
+      - "*.tgz"
+    expire_in: 1 week
+
+publish:
+  stage: publish
+  image: node:20
+  tags:
+    - kubernetes
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - PKG_VERSION="$(node -p "require('./package.json').version")"
+    - |
+      if [ "$CI_COMMIT_TAG" != "v$PKG_VERSION" ]; then
+        echo "Tag '$CI_COMMIT_TAG' does not match package.json version 'v$PKG_VERSION'. Bump package.json and retag."
+        exit 1
+      fi
+    - npm ci
+    - npm run build
+    # scoped .npmrc: only @pwlab -> Nexus, default registry stays public npm
+    - |
+      {
+        echo "@pwlab:registry=${NPM_REGISTRY}"
+        echo "//nexus.pwlab.dev/repository/npm-hosted/:_auth=${NEXUS_NPM_AUTH}"
+      } > .npmrc
+    - npm publish
+  after_script:
+    - rm -f .npmrc
