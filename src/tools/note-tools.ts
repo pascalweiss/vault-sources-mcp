@@ -7,7 +7,7 @@ import { DatabaseNotInitializedError, VaultSourcesError } from "../errors.js";
 export function registerNoteTools(server: McpServer, dbManager: DatabaseManager): void {
   function getRepo(): NoteRepository {
     if (!dbManager.isInitialized()) throw new DatabaseNotInitializedError();
-    return new NoteRepository(dbManager.connection);
+    return new NoteRepository(dbManager);
   }
 
   server.registerTool(

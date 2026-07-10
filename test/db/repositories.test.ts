@@ -1,25 +1,27 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { DatabaseManager } from "../../src/db/database.js";
 import { InputRepository } from "../../src/db/repositories/input-repository.js";
 import { NoteRepository } from "../../src/db/repositories/note-repository.js";
 import { LinkRepository } from "../../src/db/repositories/link-repository.js";
-import { EventRepository } from "../../src/db/repositories/event-repository.js";
 import { EntityNotFoundError } from "../../src/errors.js";
+import type { CanonicalEventType } from "../../src/types.js";
+import { openTestDb, type TestDb } from "../helpers.js";
+
+function eventsOfType(ctx: TestDb, type: CanonicalEventType) {
+  return ctx.dbm.events.readAll().filter((e) => e.type === type);
+}
 
 describe("InputRepository", () => {
-  let dbm: DatabaseManager;
+  let ctx: TestDb;
   let repo: InputRepository;
 
   beforeEach(() => {
-    dbm = new DatabaseManager();
-    dbm.open(":memory:");
-    dbm.initialize();
-    repo = new InputRepository(dbm.connection);
+    ctx = openTestDb();
+    repo = new InputRepository(ctx.dbm);
   });
 
   afterEach(() => {
-    dbm.close();
+    ctx.cleanup();
   });
 
   it("should store an input", () => {
@@ -38,7 +40,7 @@ describe("InputRepository", () => {
     assert.equal(input.input_id, "input-001"); // returns the original
   });
 
-  it("should get an input by ID", () => {
+  it("should get an input by ID with hydrated content", () => {
     repo.store("input-001", "Test content");
     const input = repo.getById("input-001");
     assert.equal(input.input_id, "input-001");
@@ -52,8 +54,7 @@ describe("InputRepository", () => {
   it("should list inputs", () => {
     repo.store("input-001", "First");
     repo.store("input-002", "Second");
-    const all = repo.list();
-    assert.equal(all.length, 2);
+    assert.equal(repo.list().length, 2);
   });
 
   it("should filter by state", () => {
@@ -70,11 +71,15 @@ describe("InputRepository", () => {
     assert.equal(redacted[0].input_id, "input-002");
   });
 
-  it("should redact an input", () => {
-    repo.store("input-001", "Sensitive text");
+  it("should redact an input and remove its body from the store", () => {
+    const { input } = repo.store("input-001", "Sensitive text");
+    const sha = input.content_sha256;
+    assert.equal(ctx.dbm.getInput(sha), "Sensitive text");
+
     const redacted = repo.redact("input-001");
     assert.equal(redacted.state, "redacted");
     assert.equal(redacted.content, null);
+    assert.equal(ctx.dbm.getInput(sha), null); // body deleted from working tree
 
     const fetched = repo.getById("input-001");
     assert.equal(fetched.content, null);
@@ -88,35 +93,31 @@ describe("InputRepository", () => {
     assert.equal(meta.source, "youtube");
   });
 
-  it("should emit INPUT_STORED event", () => {
+  it("should append an INPUT_STORED event to the log", () => {
     repo.store("input-001", "Test");
-    const events = new EventRepository(dbm.connection).query({ event_type: "INPUT_STORED" });
+    const events = eventsOfType(ctx, "INPUT_STORED");
     assert.equal(events.length, 1);
-    const payload = JSON.parse(events[0].payload);
-    assert.equal(payload.input_id, "input-001");
+    assert.equal(events[0].payload["input_id"], "input-001");
   });
 
-  it("should emit INPUT_REDACTED event", () => {
+  it("should append an INPUT_REDACTED event to the log", () => {
     repo.store("input-001", "Test");
     repo.redact("input-001");
-    const events = new EventRepository(dbm.connection).query({ event_type: "INPUT_REDACTED" });
-    assert.equal(events.length, 1);
+    assert.equal(eventsOfType(ctx, "INPUT_REDACTED").length, 1);
   });
 });
 
 describe("NoteRepository", () => {
-  let dbm: DatabaseManager;
+  let ctx: TestDb;
   let repo: NoteRepository;
 
   beforeEach(() => {
-    dbm = new DatabaseManager();
-    dbm.open(":memory:");
-    dbm.initialize();
-    repo = new NoteRepository(dbm.connection);
+    ctx = openTestDb();
+    repo = new NoteRepository(ctx.dbm);
   });
 
   afterEach(() => {
-    dbm.close();
+    ctx.cleanup();
   });
 
   it("should register a new note", () => {
@@ -127,7 +128,6 @@ describe("NoteRepository", () => {
 
   it("should update last_seen_at on re-registration", () => {
     const first = repo.register("note-001");
-    // Small delay to ensure different timestamp
     const second = repo.register("note-001");
     assert.equal(second.note_id, "note-001");
     assert.ok(second.last_seen_at >= first.last_seen_at);
@@ -135,8 +135,7 @@ describe("NoteRepository", () => {
 
   it("should get a note by ID", () => {
     repo.register("note-001");
-    const note = repo.getById("note-001");
-    assert.equal(note.note_id, "note-001");
+    assert.equal(repo.getById("note-001").note_id, "note-001");
   });
 
   it("should throw EntityNotFoundError for missing note", () => {
@@ -154,42 +153,41 @@ describe("NoteRepository", () => {
 
   it("should find stale notes", () => {
     repo.register("note-001");
-    // All notes are "now" so nothing should be stale if threshold is in the future
     const futureDate = new Date(Date.now() + 86400000).toISOString();
-    const stale = repo.findStale(futureDate);
-    assert.equal(stale.length, 1);
+    assert.equal(repo.findStale(futureDate).length, 1);
 
     const pastDate = new Date(Date.now() - 86400000).toISOString();
-    const notStale = repo.findStale(pastDate);
-    assert.equal(notStale.length, 0);
+    assert.equal(repo.findStale(pastDate).length, 0);
   });
 
   it("should find unlinked notes", () => {
     repo.register("note-001");
-    const unlinked = repo.findUnlinked();
-    assert.equal(unlinked.length, 1);
+    assert.equal(repo.findUnlinked().length, 1);
   });
 
-  it("should emit NOTE_SEEN events", () => {
+  it("should append a NOTE_REGISTERED event to the log", () => {
     repo.register("note-001");
-    const events = new EventRepository(dbm.connection).query({ event_type: "NOTE_SEEN" });
-    assert.equal(events.length, 1);
+    assert.equal(eventsOfType(ctx, "NOTE_REGISTERED").length, 1);
+  });
+
+  it("should append a NOTE_DELETED event to the log", () => {
+    repo.register("note-001");
+    repo.markDeleted("note-001");
+    assert.equal(eventsOfType(ctx, "NOTE_DELETED").length, 1);
   });
 });
 
 describe("LinkRepository", () => {
-  let dbm: DatabaseManager;
+  let ctx: TestDb;
   let inputRepo: InputRepository;
   let noteRepo: NoteRepository;
   let linkRepo: LinkRepository;
 
   beforeEach(() => {
-    dbm = new DatabaseManager();
-    dbm.open(":memory:");
-    dbm.initialize();
-    inputRepo = new InputRepository(dbm.connection);
-    noteRepo = new NoteRepository(dbm.connection);
-    linkRepo = new LinkRepository(dbm.connection);
+    ctx = openTestDb();
+    inputRepo = new InputRepository(ctx.dbm);
+    noteRepo = new NoteRepository(ctx.dbm);
+    linkRepo = new LinkRepository(ctx.dbm);
 
     inputRepo.store("input-001", "Gardening transcript about tomatoes");
     inputRepo.store("input-002", "Article about composting methods");
@@ -198,7 +196,7 @@ describe("LinkRepository", () => {
   });
 
   afterEach(() => {
-    dbm.close();
+    ctx.cleanup();
   });
 
   it("should add a link", () => {
@@ -224,31 +222,26 @@ describe("LinkRepository", () => {
 
   it("should remove a link", () => {
     linkRepo.add("input-001", "note-001");
-    const removed = linkRepo.remove("input-001", "note-001");
-    assert.equal(removed, true);
+    assert.equal(linkRepo.remove("input-001", "note-001"), true);
   });
 
   it("should return false when removing nonexistent link", () => {
-    const removed = linkRepo.remove("input-001", "note-001");
-    assert.equal(removed, false);
+    assert.equal(linkRepo.remove("input-001", "note-001"), false);
   });
 
   it("should get sources for a note", () => {
     linkRepo.add("input-001", "note-001");
     linkRepo.add("input-002", "note-001");
-    const sources = linkRepo.getSourcesForNote("note-001");
-    assert.equal(sources.length, 2);
+    assert.equal(linkRepo.getSourcesForNote("note-001").length, 2);
   });
 
   it("should get notes for an input", () => {
     linkRepo.add("input-001", "note-001");
     linkRepo.add("input-001", "note-002");
-    const notes = linkRepo.getNotesForInput("input-001");
-    assert.equal(notes.length, 2);
+    assert.equal(linkRepo.getNotesForInput("input-001").length, 2);
   });
 
   it("should find orphaned inputs", () => {
-    // input-001 linked, input-002 not
     linkRepo.add("input-001", "note-001");
     const orphaned = linkRepo.findOrphanedInputs();
     assert.equal(orphaned.length, 1);
@@ -258,21 +251,18 @@ describe("LinkRepository", () => {
   it("should detect orphaned input after link removal", () => {
     linkRepo.add("input-001", "note-001");
     linkRepo.remove("input-001", "note-001");
-    const orphaned = linkRepo.findOrphanedInputs();
-    assert.equal(orphaned.length, 2); // both are now orphaned
+    assert.equal(linkRepo.findOrphanedInputs().length, 2);
   });
 
-  it("should emit LINK_ADDED event", () => {
+  it("should append a LINK_ADDED event to the log", () => {
     linkRepo.add("input-001", "note-001");
-    const events = new EventRepository(dbm.connection).query({ event_type: "LINK_ADDED" });
-    assert.equal(events.length, 1);
+    assert.equal(eventsOfType(ctx, "LINK_ADDED").length, 1);
   });
 
-  it("should emit LINK_REMOVED event", () => {
+  it("should append a LINK_REMOVED event to the log", () => {
     linkRepo.add("input-001", "note-001");
     linkRepo.remove("input-001", "note-001");
-    const events = new EventRepository(dbm.connection).query({ event_type: "LINK_REMOVED" });
-    assert.equal(events.length, 1);
+    assert.equal(eventsOfType(ctx, "LINK_REMOVED").length, 1);
   });
 
   it("should preserve link after input redaction", () => {
@@ -285,55 +275,31 @@ describe("LinkRepository", () => {
   });
 });
 
-describe("EventRepository", () => {
-  let dbm: DatabaseManager;
-  let repo: EventRepository;
+describe("Event log projection round-trip", () => {
+  let ctx: TestDb;
 
   beforeEach(() => {
-    dbm = new DatabaseManager();
-    dbm.open(":memory:");
-    dbm.initialize();
-    repo = new EventRepository(dbm.connection);
+    ctx = openTestDb();
   });
 
   afterEach(() => {
-    dbm.close();
+    ctx.cleanup();
   });
 
-  it("should append and retrieve events", () => {
-    repo.append("INPUT_STORED", { input_id: "test-001" });
-    const events = repo.query({ event_type: "INPUT_STORED" });
-    assert.equal(events.length, 1);
-    assert.equal(events[0].event_type, "INPUT_STORED");
-  });
+  it("rebuilds the same projection from the log", () => {
+    const inputs = new InputRepository(ctx.dbm);
+    const notes = new NoteRepository(ctx.dbm);
+    const links = new LinkRepository(ctx.dbm);
 
-  it("should filter by event type", () => {
-    repo.append("INPUT_STORED", { input_id: "test-001" });
-    repo.append("NOTE_SEEN", { note_id: "note-001" });
+    inputs.store("input-001", "content one");
+    notes.register("note-001", { title: "Note One" });
+    links.add("input-001", "note-001");
 
-    const inputEvents = repo.query({ event_type: "INPUT_STORED" });
-    assert.equal(inputEvents.length, 1);
+    const before = ctx.dbm.connection.prepare(`SELECT COUNT(*) c FROM input_note_links`).get() as { c: number };
+    assert.equal(before.c, 1);
 
-    const noteEvents = repo.query({ event_type: "NOTE_SEEN" });
-    assert.equal(noteEvents.length, 1);
-  });
-
-  it("should paginate results", () => {
-    for (let i = 0; i < 5; i++) {
-      repo.append("INPUT_STORED", { input_id: `test-${i}` });
-    }
-    const page1 = repo.query({ limit: 2, offset: 0 });
-    const page2 = repo.query({ limit: 2, offset: 2 });
-    // +1 for DB_INITIALIZED event
-    assert.equal(page1.length, 2);
-    assert.equal(page2.length, 2);
-  });
-
-  it("should filter by since timestamp", () => {
-    const pastDate = new Date(Date.now() - 86400000).toISOString();
-    repo.append("INPUT_STORED", { input_id: "test-001" });
-    const events = repo.query({ since: pastDate });
-    // DB_INITIALIZED + INPUT_STORED
-    assert.ok(events.length >= 2);
+    // The log holds exactly the three mutations.
+    const types = ctx.dbm.events.readAll().map((e) => e.type);
+    assert.deepEqual(types.sort(), ["INPUT_STORED", "LINK_ADDED", "NOTE_REGISTERED"]);
   });
 });

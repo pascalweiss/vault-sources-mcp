@@ -1,13 +1,12 @@
-import type { Database as DatabaseType } from "better-sqlite3";
 import type { InputNoteLink, InputId, NoteId, Input, Note } from "../../types.js";
 import { EntityNotFoundError } from "../../errors.js";
-import { EventRepository } from "./event-repository.js";
+import type { DatabaseManager } from "../database.js";
 
 export class LinkRepository {
-  private events: EventRepository;
+  constructor(private mgr: DatabaseManager) {}
 
-  constructor(private db: DatabaseType) {
-    this.events = new EventRepository(db);
+  private get db() {
+    return this.mgr.connection;
   }
 
   add(inputId: InputId, noteId: NoteId): { link: InputNoteLink; created: boolean } {
@@ -15,36 +14,26 @@ export class LinkRepository {
     this.requireInput(inputId);
     this.requireNote(noteId);
 
-    const existing = this.db
-      .prepare(`SELECT * FROM input_note_links WHERE input_id = ? AND note_id = ?`)
-      .get(inputId, noteId) as InputNoteLink | undefined;
-
+    const existing = this.find(inputId, noteId);
     if (existing) {
       return { link: existing, created: false };
     }
 
-    const now = new Date().toISOString();
-    this.db
-      .prepare(`INSERT INTO input_note_links (input_id, note_id, created_at) VALUES (?, ?, ?)`)
-      .run(inputId, noteId, now);
+    this.mgr.commit("LINK_ADDED", { input_id: inputId, note_id: noteId });
 
-    const link: InputNoteLink = { input_id: inputId, note_id: noteId, created_at: now };
-
-    this.events.append("LINK_ADDED", { input_id: inputId, note_id: noteId });
-
-    return { link, created: true };
+    return { link: this.find(inputId, noteId)!, created: true };
   }
 
   remove(inputId: InputId, noteId: NoteId): boolean {
-    const result = this.db
-      .prepare(`DELETE FROM input_note_links WHERE input_id = ? AND note_id = ?`)
-      .run(inputId, noteId);
+    if (!this.find(inputId, noteId)) return false;
+    this.mgr.commit("LINK_REMOVED", { input_id: inputId, note_id: noteId });
+    return true;
+  }
 
-    if (result.changes > 0) {
-      this.events.append("LINK_REMOVED", { input_id: inputId, note_id: noteId });
-      return true;
-    }
-    return false;
+  private find(inputId: InputId, noteId: NoteId): InputNoteLink | undefined {
+    return this.db
+      .prepare(`SELECT * FROM input_note_links WHERE input_id = ? AND note_id = ?`)
+      .get(inputId, noteId) as InputNoteLink | undefined;
   }
 
   getSourcesForNote(noteId: NoteId): Input[] {

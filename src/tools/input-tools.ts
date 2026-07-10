@@ -10,7 +10,7 @@ import { DatabaseNotInitializedError, VaultSourcesError, FileReadError } from ".
 export function registerInputTools(server: McpServer, dbManager: DatabaseManager): void {
   function getRepo(): InputRepository {
     if (!dbManager.isInitialized()) throw new DatabaseNotInitializedError();
-    return new InputRepository(dbManager.connection);
+    return new InputRepository(dbManager);
   }
 
   server.registerTool(

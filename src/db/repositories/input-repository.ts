@@ -1,46 +1,28 @@
-import { createHash } from "node:crypto";
-import type { Database as DatabaseType } from "better-sqlite3";
 import type { Input, InputId } from "../../types.js";
 import { EntityNotFoundError } from "../../errors.js";
-import { EventRepository } from "./event-repository.js";
+import { sha256 } from "../../log/hash.js";
+import type { DatabaseManager } from "../database.js";
 
 export class InputRepository {
-  private events: EventRepository;
+  constructor(private mgr: DatabaseManager) {}
 
-  constructor(private db: DatabaseType) {
-    this.events = new EventRepository(db);
+  private get db() {
+    return this.mgr.connection;
   }
 
   store(inputId: InputId, content: string, meta?: Record<string, unknown>): { input: Input; duplicate: boolean } {
-    const sha256 = computeSha256(content);
-    const existing = this.findBySha256(sha256);
+    const sha = sha256(content);
+    const existing = this.findBySha256(sha);
 
     if (existing) {
       return { input: existing, duplicate: true };
     }
 
-    const now = new Date().toISOString();
-    const metaJson = meta ? JSON.stringify(meta) : null;
+    // Content-addressed body first (source of truth), then the event that references it.
+    this.mgr.putInput(content);
+    this.mgr.commit("INPUT_STORED", { input_id: inputId, content_sha256: sha, meta: meta ?? null });
 
-    this.db
-      .prepare(
-        `INSERT INTO inputs (input_id, content, content_sha256, state, created_at, meta_json)
-         VALUES (?, ?, ?, 'active', ?, ?)`,
-      )
-      .run(inputId, content, sha256, now, metaJson);
-
-    const input: Input = {
-      input_id: inputId,
-      content,
-      content_sha256: sha256,
-      state: "active",
-      created_at: now,
-      meta_json: metaJson,
-    };
-
-    this.events.append("INPUT_STORED", { input_id: inputId, content_sha256: sha256 });
-
-    return { input, duplicate: false };
+    return { input: this.getById(inputId), duplicate: false };
   }
 
   getById(inputId: InputId): Input {
@@ -49,10 +31,10 @@ export class InputRepository {
     return row;
   }
 
-  findBySha256(sha256: string): Input | null {
+  findBySha256(sha256Hex: string): Input | null {
     const row = this.db
       .prepare(`SELECT * FROM inputs WHERE content_sha256 = ? AND state = 'active'`)
-      .get(sha256) as Input | undefined;
+      .get(sha256Hex) as Input | undefined;
     return row ?? null;
   }
 
@@ -77,18 +59,12 @@ export class InputRepository {
   redact(inputId: InputId): Input {
     const input = this.getById(inputId);
 
-    this.db
-      .prepare(`UPDATE inputs SET content = NULL, state = 'redacted' WHERE input_id = ?`)
-      .run(inputId);
-
-    this.events.append("INPUT_REDACTED", { input_id: inputId });
+    this.mgr.commit("INPUT_REDACTED", { input_id: inputId });
+    // Remove the working-tree body. Git history still holds it (documented caveat).
+    this.mgr.deleteInput(input.content_sha256);
 
     return { ...input, content: null, state: "redacted" };
   }
 }
 
-function computeSha256(content: string): string {
-  return createHash("sha256").update(content).digest("hex");
-}
-
-export { computeSha256 };
+export { sha256 as computeSha256 };
