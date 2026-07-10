@@ -177,8 +177,15 @@ Schema facts that make this clean (verified): `inputs` has `content` + `content_
 
 ## Status (2026-07-10)
 
-Implemented on branch `feat/git-sync-event-log`, published as `@pwlab/vault-sources-mcp@0.2.0`.
-All 66 tests pass under Node 24 (the deployment runtime; local Node 26 cannot compile
-better-sqlite3 12.6.2, so tests run via `/opt/homebrew/opt/node@24/bin`). Remaining:
-bump the PA `release.yaml` pin + set `VAULT_SOURCES_NODE_ID=pa-pod`, then migrate the
-real ledgers local-first.
+Implemented + published as `@pwlab/vault-sources-mcp@0.2.2` (0.2.0 core; 0.2.1
+WAL-checkpoint-before-backup; 0.2.2 startup auto-init + idempotent db_init). 67 tests
+pass under Node 24 (local Node 26 cannot compile better-sqlite3 12.6.2, so tests run via
+`/opt/homebrew/opt/node@24/bin`).
+
+**Rolled out:**
+- PA pod → 0.2.2 + `VAULT_SOURCES_NODE_ID=pa-pod` (homelab `86804a85`); auto-init verified in-pod.
+- Local Mac KB client wired (node@24 binary, `mac-local`).
+- `obsidian-vaults/it` + `obsidian-vaults/trading` migrated, verified, committed + pushed.
+
+**Deferred:** pod `app-market-gap` (second-brain) — needs vault-sources wired into the
+second-brain release first; single-env, no cross-env need.
