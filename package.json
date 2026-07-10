@@ -1,6 +1,6 @@
 {
   "name": "@pwlab/vault-sources-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP Server for tracking AI input → Obsidian vault provenance",
   "main": "dist/src/index.js",
   "type": "module",

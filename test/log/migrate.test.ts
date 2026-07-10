@@ -121,6 +121,33 @@ describe("Legacy migration", () => {
     }
   });
 
+  it("migrates a WAL-mode legacy ledger and writes a complete backup", () => {
+    // Build the legacy ledger in WAL mode (like the real server left it).
+    const legacy = new Database(dbPath);
+    legacy.pragma("journal_mode = WAL");
+    applySchema(legacy);
+    const sha = sha256("wal body");
+    legacy
+      .prepare(`INSERT INTO inputs (input_id, content, content_sha256, state, created_at, meta_json) VALUES (?,?,?,?,?,?)`)
+      .run("iw", "wal body", sha, "active", "2026-02-01T00:00:00.000Z", null);
+    legacy.close();
+
+    const dbm = new DatabaseManager();
+    dbm.open(dbPath);
+    try {
+      // Backup is a valid, complete SQLite with the original row.
+      const backup = new Database(`${dbPath}.pre-migration`, { readonly: true });
+      const count = backup.prepare(`SELECT COUNT(*) c FROM inputs`).get() as { c: number };
+      backup.close();
+      assert.equal(count.c, 1);
+
+      // Migration reproduced the input and hydrated its body.
+      assert.equal(dbm.getInput(sha), "wal body");
+    } finally {
+      dbm.close();
+    }
+  });
+
   it("does not re-migrate on a second open", () => {
     buildLegacyDb(dbPath);
 

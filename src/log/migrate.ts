@@ -28,7 +28,15 @@ export function migrateLegacy(
   projector: Projector,
   dbPath: string,
 ): void {
-  // 0. Durable backup before touching anything.
+  // 0. Consolidate any WAL sidecar into the main file first, so the durable
+  // backup (a plain file copy of the main .sqlite) is complete. A legacy ledger
+  // left with committed-but-uncheckpointed data in a `-wal` file would otherwise
+  // produce a truncated backup. Non-WAL databases treat this as a no-op.
+  try {
+    db.pragma("wal_checkpoint(TRUNCATE)");
+  } catch {
+    // Ignore: nothing to checkpoint.
+  }
   const backup = `${dbPath}.pre-migration`;
   if (!existsSync(backup)) copyFileSync(dbPath, backup);
 
