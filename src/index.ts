@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -74,7 +73,7 @@ const hasExplicitConfig = resolveDbPath() !== null;
 const server = new McpServer(
   {
     name: "vault-sources-mcp",
-    version: "0.2.1",
+    version: "0.2.2",
     title: "Vault Sources",
     description:
       "Provenance ledger for AI-generated Obsidian vaults. " +
@@ -86,13 +85,12 @@ const server = new McpServer(
     instructions: [
       "This server tracks provenance for an Obsidian vault — it records which source inputs were used to create which notes.",
       "",
-      "Typical workflow:",
-      "1. Initialize the database with db_init (one-time setup).",
-      "2. Store raw source material (transcripts, articles, etc.) with store_input.",
-      "3. When creating a vault note, call generate_note_id to get a UUIDv7, embed it in the note's YAML frontmatter, then register_note.",
-      "4. Link sources to notes with add_link to establish provenance.",
-      "5. Query provenance with get_sources_for_note / get_notes_for_input.",
-      "6. Run find_orphaned_inputs, find_unlinked_notes, or find_stale_notes for health checks.",
+      "Typical workflow (the store auto-initializes on startup; db_init is optional):",
+      "1. Store raw source material (transcripts, articles, etc.) with store_input.",
+      "2. When creating a vault note, call generate_note_id to get a UUIDv7, embed it in the note's YAML frontmatter, then register_note.",
+      "3. Link sources to notes with add_link to establish provenance.",
+      "4. Query provenance with get_sources_for_note / get_notes_for_input.",
+      "5. Run find_orphaned_inputs, find_unlinked_notes, or find_stale_notes for health checks.",
       "",
       "The server never reads or writes vault files — it only manages the provenance database.",
     ].join("\n"),
@@ -101,8 +99,11 @@ const server = new McpServer(
 
 const dbManager = new DatabaseManager();
 
-// Auto-open existing DB on startup (only when path is already known)
-if (hasExplicitConfig && existsSync(config.dbPath)) {
+// Open (and, if needed, create + migrate) the store when the path is already
+// known. open() is idempotent: it applies the schema, migrates a legacy SQLite
+// ledger once, and rebuilds the projection from the event log — so a fresh vault
+// "just works" without a manual db_init.
+if (hasExplicitConfig) {
   dbManager.open(config.dbPath);
 }
 
@@ -125,12 +126,7 @@ async function main(): Promise<void> {
       lowLevelServer.oninitialized = async () => {
         try {
           config.dbPath = await resolveDbPathFromRoots(lowLevelServer);
-
-          // Auto-open if DB file already exists
-          if (existsSync(config.dbPath)) {
-            dbManager.open(config.dbPath);
-          }
-
+          dbManager.open(config.dbPath);
           resolve();
         } catch (err) {
           reject(err);

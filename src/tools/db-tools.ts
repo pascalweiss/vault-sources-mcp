@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { DatabaseManager } from "../db/database.js";
-import { DatabaseAlreadyInitializedError } from "../errors.js";
 
 export function registerDbTools(server: McpServer, dbManager: DatabaseManager, getDbPath: () => string): void {
   server.registerTool(
@@ -65,17 +64,17 @@ export function registerDbTools(server: McpServer, dbManager: DatabaseManager, g
       },
     },
     async ({ path: overridePath }) => {
-      if (dbManager.isInitialized()) {
-        throw new DatabaseAlreadyInitializedError();
-      }
-
       const targetPath = overridePath ?? getDbPath();
+      const already = dbManager.isInitialized();
 
+      // Idempotent: the server auto-opens (and migrates) on startup when a path
+      // is configured, so db_init usually finds the store already initialized.
       try {
-        if (!dbManager.isInitialized()) {
+        if (!already) {
           dbManager.open(targetPath);
+        } else {
+          dbManager.initialize(); // ensure schema (no-op if present)
         }
-        dbManager.initialize();
       } catch (err) {
         return {
           isError: true,
@@ -91,7 +90,7 @@ export function registerDbTools(server: McpServer, dbManager: DatabaseManager, g
               {
                 initialized: true,
                 path: targetPath,
-                message: "Database created and migrated successfully.",
+                message: already ? "Database already initialized." : "Database created and migrated successfully.",
               },
               null,
               2,
