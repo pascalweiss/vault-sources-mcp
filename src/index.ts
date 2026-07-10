@@ -74,7 +74,7 @@ const hasExplicitConfig = resolveDbPath() !== null;
 const server = new McpServer(
   {
     name: "vault-sources-mcp",
-    version: "0.1.0",
+    version: "0.2.0",
     title: "Vault Sources",
     description:
       "Provenance ledger for AI-generated Obsidian vaults. " +

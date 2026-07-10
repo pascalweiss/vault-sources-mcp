@@ -42,3 +42,14 @@ export class FileReadError extends VaultSourcesError {
     this.name = "FileReadError";
   }
 }
+
+export class MigrationVerificationError extends VaultSourcesError {
+  constructor(problems: string[]) {
+    super(
+      `Legacy migration verification failed; the rebuilt projection does not match the legacy state. ` +
+        `The legacy database was left untouched (backup kept). Problems:\n- ${problems.join("\n- ")}`,
+      "MIGRATION_VERIFICATION_FAILED",
+    );
+    this.name = "MigrationVerificationError";
+  }
+}

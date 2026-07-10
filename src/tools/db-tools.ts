@@ -28,7 +28,8 @@ export function registerDbTools(server: McpServer, dbManager: DatabaseManager, g
       const inputCount = (db.prepare("SELECT COUNT(*) as count FROM inputs").get() as { count: number }).count;
       const noteCount = (db.prepare("SELECT COUNT(*) as count FROM notes").get() as { count: number }).count;
       const linkCount = (db.prepare("SELECT COUNT(*) as count FROM input_note_links").get() as { count: number }).count;
-      const eventCount = (db.prepare("SELECT COUNT(*) as count FROM events").get() as { count: number }).count;
+      // Events now live in the git-synced JSONL log, not the SQLite table.
+      const eventCount = dbManager.events.readAll().length;
 
       return {
         content: [

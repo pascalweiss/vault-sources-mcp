@@ -7,7 +7,7 @@ import { DatabaseNotInitializedError, VaultSourcesError } from "../errors.js";
 export function registerLinkTools(server: McpServer, dbManager: DatabaseManager): void {
   function getRepo(): LinkRepository {
     if (!dbManager.isInitialized()) throw new DatabaseNotInitializedError();
-    return new LinkRepository(dbManager.connection);
+    return new LinkRepository(dbManager);
   }
 
   server.registerTool(

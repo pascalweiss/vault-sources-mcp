@@ -3,9 +3,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { DatabaseManager } from "../db/database.js";
 import { NoteRepository } from "../db/repositories/note-repository.js";
 import { LinkRepository } from "../db/repositories/link-repository.js";
-import { EventRepository } from "../db/repositories/event-repository.js";
 import { DatabaseNotInitializedError } from "../errors.js";
-import type { EventType } from "../types.js";
+import type { CanonicalEventType } from "../types.js";
 
 export function registerReconciliationTools(server: McpServer, dbManager: DatabaseManager): void {
   function requireDb() {
@@ -26,8 +25,8 @@ export function registerReconciliationTools(server: McpServer, dbManager: Databa
       },
     },
     async ({ not_seen_since }) => {
-      const db = requireDb();
-      const repo = new NoteRepository(db);
+      requireDb();
+      const repo = new NoteRepository(dbManager);
       const notes = repo.findStale(not_seen_since);
 
       const summary = notes.map((n) => ({
@@ -50,8 +49,8 @@ export function registerReconciliationTools(server: McpServer, dbManager: Databa
         "These inputs were stored but never linked, or all their links were removed.",
     },
     async () => {
-      const db = requireDb();
-      const repo = new LinkRepository(db);
+      requireDb();
+      const repo = new LinkRepository(dbManager);
       const orphaned = repo.findOrphanedInputs();
 
       const summary = orphaned.map((i) => ({
@@ -76,8 +75,8 @@ export function registerReconciliationTools(server: McpServer, dbManager: Databa
         "These notes have no known source tracked in the database.",
     },
     async () => {
-      const db = requireDb();
-      const repo = new NoteRepository(db);
+      requireDb();
+      const repo = new NoteRepository(dbManager);
       const unlinked = repo.findUnlinked();
 
       const summary = unlinked.map((n) => ({
@@ -97,45 +96,45 @@ export function registerReconciliationTools(server: McpServer, dbManager: Databa
     "get_event_log",
     {
       description:
-        "Query the append-only event log. Supports filtering by event type and time range.",
+        "Query the append-only event log (the git-synced JSONL log across all environments). " +
+        "Supports filtering by event type and time range.",
       inputSchema: {
         event_type: z
           .enum([
-            "DB_INITIALIZED",
             "INPUT_STORED",
             "INPUT_REDACTED",
-            "NOTE_SEEN",
-            "NOTE_MARKED_DELETED",
-            "NOTES_MERGED",
+            "NOTE_REGISTERED",
+            "NOTE_DELETED",
             "LINK_ADDED",
             "LINK_REMOVED",
           ])
           .optional()
           .describe("Filter by event type."),
-        since: z.string().optional().describe("ISO 8601 timestamp. Only return events after this time."),
+        since: z.string().optional().describe("ISO 8601 timestamp. Only return events at or after this time."),
         limit: z.number().int().min(1).max(500).optional().describe("Max results (default 100)."),
         offset: z.number().int().min(0).optional().describe("Offset for pagination."),
       },
     },
     async ({ event_type, since, limit, offset }) => {
-      const db = requireDb();
-      const repo = new EventRepository(db);
-      const events = repo.query({
-        event_type: (event_type ?? undefined) as EventType | undefined,
-        since: since ?? undefined,
-        limit: limit ?? undefined,
-        offset: offset ?? undefined,
-      });
+      requireDb();
+      const wantType = (event_type ?? undefined) as CanonicalEventType | undefined;
+      const from = offset ?? 0;
+      const max = limit ?? 100;
 
-      const summary = events.map((e) => ({
-        event_id: e.event_id,
-        event_type: e.event_type,
-        timestamp: e.timestamp,
-        payload: JSON.parse(e.payload),
+      const all = dbManager.events
+        .readAll()
+        .filter((e) => (wantType ? e.type === wantType : true))
+        .filter((e) => (since ? e.ts >= since : true));
+
+      const page = all.slice(from, from + max).map((e) => ({
+        uid: e.uid,
+        event_type: e.type,
+        timestamp: e.ts,
+        payload: e.payload,
       }));
 
       return {
-        content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify(page, null, 2) }],
       };
     },
   );

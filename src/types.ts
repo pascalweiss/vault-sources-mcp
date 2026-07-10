@@ -33,7 +33,10 @@ export interface InputNoteLink {
   created_at: string;
 }
 
-// ---- Events ----
+// ---- Legacy events (SQLite `events` table, pre git-sync) ----
+//
+// Kept only so the one-time migration can read old ledgers. New writes go to the
+// git-synced JSONL log (CanonicalEvent) instead. See src/log/.
 
 export type EventType =
   | "DB_INITIALIZED"
@@ -50,6 +53,28 @@ export interface VaultEvent {
   event_type: EventType;
   timestamp: string;
   payload: string; // JSON
+}
+
+// ---- Canonical events (git-synced JSONL log, the source of truth) ----
+//
+// One JSON object per line in `.vault-sources/events/<node-id>.jsonl`. The SQLite
+// DB is a rebuildable projection of these events. `uid` is a UUIDv7 (globally
+// unique + time-ordered); rebuild sorts by (ts, uid) so replay is deterministic
+// regardless of how git interleaves shards from different environments.
+
+export type CanonicalEventType =
+  | "INPUT_STORED"
+  | "INPUT_REDACTED"
+  | "NOTE_REGISTERED"
+  | "NOTE_DELETED"
+  | "LINK_ADDED"
+  | "LINK_REMOVED";
+
+export interface CanonicalEvent {
+  uid: string; // UUIDv7
+  type: CanonicalEventType;
+  ts: string; // ISO 8601
+  payload: Record<string, unknown>;
 }
 
 // ---- Constants ----

@@ -55,6 +55,71 @@ The agent handles all vault interactions. The MCP server handles all provenance 
 
 ---
 
+## Git-synced provenance (event log)
+
+The same vault is often used from more than one place — a laptop and a server pod,
+say — each running its own instance of this server against the same git-synced
+markdown. A single binary SQLite file cannot be merged by git, so concurrent
+writes from two environments would conflict and silently drop provenance.
+
+To make provenance sync as cleanly as the notes themselves, **SQLite is no longer
+the source of truth — it is a rebuildable projection (cache).** The durable,
+git-synced source of truth is an append-only event log, sharded per writer:
+
+```
+<vault>/
+  .vault-sources/
+    events/
+      <node-id>.jsonl     # append-only; ONE writer per file → git never has to merge it
+      <other-node>.jsonl
+    inputs/
+      <sha256>            # content-addressed input bodies, immutable, deduped
+    node                  # this machine's node-id marker (gitignored, per-machine)
+  .vault-sources.sqlite   # derived projection, gitignored, rebuilt from the log
+```
+
+Why this is conflict-free and correct:
+
+1. **Disjoint shard files** — each environment only ever appends to its own
+   `<node-id>.jsonl`, so git merges are trivial (no overlapping edits).
+2. **Content-addressed inputs** — identical bodies hash to the same file, so they
+   dedupe for free and never conflict.
+3. **UUIDv7 event ids** — globally unique and time-ordered.
+4. **Deterministic replay** — rebuild = read every shard, dedupe by event id, sort
+   by `(ts, uid)`, apply. The result is identical no matter how git interleaved the
+   shards.
+
+A long-running server also watches the log (poll + `fs.watch`) and applies events
+another environment appended after a `git pull`, so it stays current without a
+restart.
+
+**Migration is automatic and verified.** The first time the server opens a vault
+that still has a legacy `.vault-sources.sqlite` but no event log, it synthesizes
+the log from the SQLite state, backs the old file up to `.vault-sources.sqlite.pre-migration`,
+and only commits once a throwaway in-memory replay is proven to reproduce the
+legacy state. On mismatch it aborts and leaves everything untouched.
+
+### What to commit
+
+In each vault repo, **track** `.vault-sources/events/` and `.vault-sources/inputs/`,
+and **ignore** the derived cache and the per-machine marker:
+
+```gitignore
+.vault-sources.sqlite*
+.vault-sources/node
+```
+
+### Caveats
+
+- **Redaction is working-tree only.** `redact_input` deletes the content file from
+  the working tree, but git history still holds it. Do not store secrets you must
+  be able to hard-delete; real scrubbing needs a history rewrite.
+- **Node-ids must be unique per environment.** Two environments sharing a node-id
+  would append to the same shard and reintroduce conflicts. Set an explicit
+  `VAULT_SOURCES_NODE_ID` per environment (see Configuration).
+
+---
+
 ## Installation
 
 ```bash
@@ -184,8 +249,9 @@ This means MCP clients like Claude Code, which expose the working directory as a
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `VAULT_SOURCES_DB_PATH` | Explicit path to the SQLite database file | — |
-| `VAULT_PATH` | Path to Obsidian vault (DB stored as `.vault-sources.sqlite` inside it) | — |
+| `VAULT_SOURCES_DB_PATH` | Explicit path to the SQLite projection file | — |
+| `VAULT_PATH` | Path to Obsidian vault (projection stored as `.vault-sources.sqlite` inside it; the event log lives in `.vault-sources/` next to it) | — |
+| `VAULT_SOURCES_NODE_ID` | Unique id for this environment's event-log shard (e.g. `pa-pod`, `mac-local`). Must differ between environments sharing a vault. Falls back to a random id persisted in the gitignored `.vault-sources/node`. | random |
 
 ---
 
@@ -272,7 +338,7 @@ For periodic vault health checks:
 |-----------|---------------|
 | **Separation of concerns** | The server never reads or writes vault files. All vault interactions are the agent's job. |
 | **Provenance, not duplication** | Inputs live outside the vault. Notes don't link to inputs. Relationships exist only in the ledger. |
-| **Auditability** | Every mutation produces an immutable event. The log is append-only and never modified. |
+| **Auditability** | Every mutation produces an immutable event in a git-synced, append-only log. SQLite is just a rebuildable projection of that log. |
 | **Explicit over implicit** | The database is never created silently. IDs require user approval. Reconciliation suggests — it never auto-fixes. |
 
 ---
@@ -285,13 +351,20 @@ vault-sources-mcp/
 │   ├── index.ts                    # MCP server entry point (stdio transport)
 │   ├── types.ts                    # Core types: Input, Note, Link, Event
 │   ├── errors.ts                   # Custom error classes
+│   ├── log/
+│   │   ├── event-store.ts          # Append-only JSONL shards + content-addressed inputs
+│   │   ├── projector.ts            # Apply one canonical event to the SQLite projection
+│   │   ├── rebuild.ts              # Deterministic replay + state snapshot/diff
+│   │   ├── migrate.ts              # One-time, verified legacy-SQLite → log migration
+│   │   ├── node-id.ts              # Per-environment shard id resolution
+│   │   └── hash.ts                 # SHA-256 content addressing
 │   ├── db/
-│   │   ├── database.ts             # SQLite manager (WAL mode, FK enforcement)
+│   │   ├── database.ts             # Facade: log ↔ projection, migrate, rebuild, sync
+│   │   ├── schema.ts               # Projection schema (source of truth is the log)
 │   │   └── repositories/
 │   │       ├── input-repository.ts # Store, deduplicate, redact inputs
 │   │       ├── note-repository.ts  # Register, find stale/unlinked notes
-│   │       ├── link-repository.ts  # Provenance links, orphan detection
-│   │       └── event-repository.ts # Append-only audit log
+│   │       └── link-repository.ts  # Provenance links, orphan detection
 │   └── tools/
 │       ├── db-tools.ts             # db_status, db_init
 │       ├── id-tools.ts             # generate_note_id
