@@ -116,6 +116,11 @@ export class DatabaseManager {
           console.error("[sync] catch-up (watch) failed:", err);
         }
       });
+      // Background sync must never be a reason for the process to stay alive. The poll
+      // timer above is unref'd for that reason and the watcher needs the same, or a stdio
+      // server whose client has closed the pipe keeps running with nothing to serve. Under
+      // the SSH sandbox backend that left one orphaned server per agent run in the pod.
+      this.watcher.unref();
     } catch {
       // fs.watch is best-effort; the poll loop still guarantees eventual pickup.
     }

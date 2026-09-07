@@ -73,7 +73,7 @@ const hasExplicitConfig = resolveDbPath() !== null;
 const server = new McpServer(
   {
     name: "vault-sources-mcp",
-    version: "0.2.2",
+    version: "0.2.3",
     title: "Vault Sources",
     description:
       "Provenance ledger for AI-generated Obsidian vaults. " +
@@ -115,8 +115,37 @@ registerNoteTools(server, dbManager);
 registerLinkTools(server, dbManager);
 registerReconciliationTools(server, dbManager);
 
+/**
+ * A stdio server has exactly one client, on the other end of the pipe. When that pipe
+ * closes the run is over, so shut down rather than waiting for an event loop that the
+ * sync machinery may keep alive anyway. This also gives the store a real close, which
+ * checkpoints the WAL instead of leaving -wal and -shm behind for the next start.
+ *
+ * Under OpenClaw's SSH sandbox backend the client is an ssh session, and without this
+ * every finished agent run left a live server behind in the sandbox pod.
+ */
+function installShutdownOnClientGone(): void {
+  let shuttingDown = false;
+  const shutdown = (): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      dbManager.close();
+    } catch (err) {
+      console.error("Shutdown: closing the store failed:", err);
+    }
+    process.exit(0);
+  };
+
+  process.stdin.on("end", shutdown);
+  process.stdin.on("close", shutdown);
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
+
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
+  installShutdownOnClientGone();
 
   if (!hasExplicitConfig) {
     // Resolve DB path from MCP roots after handshake completes

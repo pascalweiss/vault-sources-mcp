@@ -189,3 +189,27 @@ pass under Node 24 (local Node 26 cannot compile better-sqlite3 12.6.2, so tests
 
 **Deferred:** pod `app-market-gap` (second-brain) — needs vault-sources wired into the
 second-brain release first; single-env, no cross-env need.
+
+## 0.2.3: the sync machinery kept the process alive (2026-09-07)
+
+The incremental watcher from phase 2 was the one handle nobody unref'd. `startSync`
+unrefs its poll timer and then registers an `fs.watch` that it does not, so from 0.2.0
+onward the process no longer exits when its client closes stdin. Nothing showed locally,
+where a client that goes away takes the shell with it.
+
+It showed in the pod. OpenClaw's SSH sandbox backend spawns one stdio server per agent
+run, so every finished run left a live server behind in
+`openclaw-sandbox-app-market-gap`: 26 orphaned processes at about 80 MiB each after 15
+hours, the pod walking from 8 MiB to 905 MiB against a 1 GiB limit, and its predecessor
+restarting 13 times with nobody noticing. `vault-graph-mcp`, spawned the same way in the
+same pod, exits cleanly and left none, which is what pointed at this side.
+
+Two changes, both in this release:
+
+- `DatabaseManager.startSync` unrefs the watcher, matching the poll timer beside it.
+  Background sync is not a reason for a process to stay alive.
+- `src/index.ts` shuts down on stdin `end`/`close` (and on SIGINT/SIGTERM), closing the
+  store first so the WAL is checkpointed rather than left behind.
+
+`test/shutdown.test.ts` covers both, by spawning the real entrypoint and asserting it
+exits within ten seconds of the pipe closing. Reverting either change fails it.
